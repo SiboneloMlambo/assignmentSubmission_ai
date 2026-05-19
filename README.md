@@ -88,14 +88,6 @@ plots/*.png                     # report-ready figures
 
 The assignment recommends Fast Downward, but also permits any suitable planner. This repository includes deterministic built-in planners for the small benchmark-style domains so the code can run without external binaries. The Fast Downward wrapper is kept in the domain code for transparency and future extension.
 
-## Recommended GitHub submission instructions
-
-```bash
-git init
-git add .
-git commit -m "Reproducibility study: probabilistic plan recognition"
-git branch -M main
-git remote add origin <YOUR_GITHUB_REPO_URL>
 git push -u origin main
 ```
 
