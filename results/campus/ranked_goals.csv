@@ -1,0 +1,6 @@
+rank,goal,optimal_cost,compliant_cost,delta,log_likelihood,probability
+1,G1_attend_lab_session,3.0,3.0,0.0,-0.0,0.8564013281114377
+2,G2_study_at_library,2.0,5.0,3.0,-3.0,0.04263771147301363
+3,G3_visit_admin_office,2.0,5.0,3.0,-3.0,0.04263771147301363
+4,G5_go_to_sports_centre,3.0,6.0,3.0,-3.0,0.04263771147301363
+5,G4_get_lunch,2.0,6.0,4.0,-4.0,0.01568553746952145
