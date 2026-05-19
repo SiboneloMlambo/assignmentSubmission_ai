@@ -84,11 +84,3 @@ publication_summary.csv         # grouped mean, std, CI results
 plots/*.png                     # report-ready figures
 ```
 
-## Planner note
-
-The assignment recommends Fast Downward, but also permits any suitable planner. This repository includes deterministic built-in planners for the small benchmark-style domains so the code can run without external binaries. The Fast Downward wrapper is kept in the domain code for transparency and future extension.
-
-git push -u origin main
-```
-
-Before submitting, update the report with your final table values and paste your GitHub link into the final PDF.
