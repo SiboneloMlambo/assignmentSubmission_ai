@@ -1,0 +1,537 @@
+\documentclass[11pt,a4paper]{article}
+
+% ── Packages ──────────────────────────────────────────────────────────────────
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{microtype}
+\usepackage{parskip}
+\usepackage[numbers,sort&compress]{natbib}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  citecolor=blue!60!black,
+  urlcolor=blue!60!black
+}
+
+% ── Title ─────────────────────────────────────────────────────────────────────
+\title{\textbf{Reproducibility Study: Probabilistic Plan Recognition\\
+Using Off-the-Shelf Classical Planners}\\[6pt]
+\large COMS7044A --- Reproducibility Assignment}
+\author{Sibonelo Mlambo 536187}
+\date{20 May 2026}
+
+% ── Document ──────────────────────────────────────────────────────────────────
+\begin{document}
+
+\maketitle
+\tableofcontents
+\clearpage
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section*{Reproducibility Summary}
+% ══════════════════════════════════════════════════════════════════════════════
+
+This report presents a reproducibility study of the probabilistic plan-recognition
+method proposed by Ram\'{i}rez and Geffner~\cite{ramirez2010} (AAAI 2010).
+The method infers an agent's most-likely goal from a sequence of partial
+observations by comparing the cost of observation-compliant versus
+non-compliant plans and combining the resulting likelihood with a prior through
+Bayes' rule.
+
+The implementation covers three planning domains---\textbf{Blocksworld},
+\textbf{Logistics}, and \textbf{Campus}.  All experiments were repeated with
+50~independent trials per condition and fixed random seeds.  Results are
+reported as means with standard deviations and 95\,\% confidence intervals.
+The main underspecified quantity in the original paper---the inverse-temperature
+parameter $\beta$---is treated as a sensitivity variable and swept across
+$\beta \in \{0.1, 0.25, 0.5, 1, 2, 5, 10\}$.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Introduction}
+% ══════════════════════════════════════════════════════════════════════════════
+
+Goal recognition is the problem of inferring which goal an observed agent is
+most likely pursuing from a (possibly incomplete) sequence of its actions.
+Ram\'{i}rez and Geffner reduce this to repeated classical planning: for each
+candidate goal $G$ they compute the cheapest plan that \emph{complies} with
+the observations and the cheapest plan that \emph{does not comply}, take the
+difference in costs $\Delta(G,O)$, and exponentiate it through a Boltzmann
+function to obtain a likelihood.  A Bayesian posterior over goals is then used
+to rank candidates.
+
+The method is elegant and computationally practical because it treats the
+planner as a black box.  This study assesses whether the core claims of the
+paper are reproducible in a clean Python re-implementation that uses a
+built-in A$^*$ planner (with an optional Fast~Downward interface) and evaluates
+the robustness of the approach under four observation-noise models.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Scope of Reproducibility}
+% ══════════════════════════════════════════════════════════════════════════════
+
+The following testable claims are evaluated:
+
+\begin{enumerate}
+  \item \textbf{Observation completeness.} Increasing the percentage of observed
+        actions improves top-1 goal-recognition accuracy.
+  \item \textbf{Posterior concentration.} The true goal receives a higher
+        posterior probability when more observations are available.
+  \item \textbf{Beta sensitivity.} The parameter $\beta$ controls the sharpness
+        of the posterior; larger $\beta$ concentrates mass on the most
+        likely goal.
+  \item \textbf{Noise robustness.} Observation noise (missing, corrupt, spurious,
+        or mixed actions) reduces recognition accuracy, with the
+        degree of degradation depending on the noise type and rate.
+  \item \textbf{Generality.} The planner-cost approach is reproducible across
+        multiple PDDL-style planning domains.
+\end{enumerate}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Background and Method}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{Probabilistic Plan Recognition}
+
+Let $\mathcal{G}$ be the set of candidate goals and $O = \langle o_1,\ldots,o_k\rangle$
+a sequence of observed actions.  For each goal $G \in \mathcal{G}$, define
+
+\begin{align}
+  \Delta(G, O) &= \operatorname{cost}(\Pi^-(G,O)) - \operatorname{cost}(\Pi^+(G,O)),
+\end{align}
+
+\noindent where $\Pi^+(G,O)$ is an optimal plan for $G$ that \emph{includes} all
+observed actions and $\Pi^-(G,O)$ is an optimal plan that is \emph{not} required
+to do so.  The Boltzmann likelihood is
+
+\begin{equation}
+  P(O \mid G) \;\propto\; e^{\,\beta\,\Delta(G,O)},
+\end{equation}
+
+\noindent and the posterior (assuming a uniform prior) is
+
+\begin{equation}
+  P(G \mid O) = \frac{e^{\,\beta\,\Delta(G,O)}}{\displaystyle\sum_{G' \in \mathcal{G}} e^{\,\beta\,\Delta(G',O)}}.
+\end{equation}
+
+The top-1 predicted goal is $\hat{G} = \arg\max_{G} P(G \mid O)$.
+
+\subsection{Ambiguities}
+
+The original paper does not specify the value of $\beta$ used in its
+experiments, which is the primary source of irreproducibility.  This study
+therefore treats $\beta$ as a free parameter and reports results for
+$\beta \in \{0.1, 0.25, 0.5, 1, 2, 5, 10\}$.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Methodology}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{Implementation}
+
+The pipeline is written in Python.  Each domain is self-contained and exposes:
+
+\begin{itemize}
+  \item PDDL-style domain and problem files.
+  \item An observation loader that samples action-prefix traces at configurable
+        observation percentages (25\,\%, 50\,\%, 75\,\%, 100\,\%).
+  \item A planner interface backed by a domain-specific A$^*$ implementation;
+        Fast~Downward can be substituted via a command-line flag.
+  \item A Bayesian scoring layer (\texttt{BayesianGoalScorer}) implementing
+        Equations~(1)--(3).
+  \item An experiment runner that sweeps $\beta$, observation percentage, noise
+        mode, and noise rate across 50 independent trials per condition.
+  \item A plotting module that writes all figures used in this report.
+\end{itemize}
+
+\subsection{Domains}
+
+\paragraph{Blocksworld.} 
+\begin{itemize}
+    \item A 3-block stacking domain.  \item Candidate goals are all
+permutations of valid stack configurations.  
+\item Plans are computed with a
+domain-specific A$^*$ planner. 
+\end{itemize} 
+
+\paragraph{Logistics.}  
+\begin{itemize}
+\item A package-delivery domain with trucks and locations.
+\item The increased branching factor makes this domain harder; fewer observations
+are sufficient to distinguish goals.
+\end{itemize}
+
+
+\paragraph{Campus.} 
+\begin{itemize}
+\item A navigation domain over a campus graph.  
+\item Goals correspond
+to destination rooms.
+\item Paths are found with A$^*$ over the campus graph.
+\end{itemize}
+
+
+\subsection{Experimental Design}
+
+\begin{itemize}
+  \item \textbf{$\beta$ values:} $\{0.1, 0.25, 0.5, 1, 2, 5, 10\}$.
+  \item \textbf{Observation percentages:} $\{25\,\%, 50\,\%, 75\,\%, 100\,\%\}$.
+  \item \textbf{Noise modes:} none, missing, corrupt, spurious, mixed.
+  \item \textbf{Noise rates:} $\{0, 0.1, 0.2, 0.3\}$.
+  \item \textbf{Trials per condition:} 50, with a fixed random seed.
+\end{itemize}
+
+\paragraph{Metrics.}  Top-1 accuracy, mean true-goal posterior probability,
+and mean true-goal rank, each reported with standard deviation and 95\,\%
+confidence interval.
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Results}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{Clean Observations (No Noise)}
+
+\subsubsection{Top-1 Accuracy}
+
+Table~\ref{tab:clean_accuracy} reports top-1 accuracy at $\beta = 1$ for all
+three domains across observation percentages.
+
+\begin{table}[H]
+\centering
+\caption{Top-1 accuracy (mean $\pm$ 95\,\% CI half-width) at $\beta = 1.0$,
+         clean observations.}
+\label{tab:clean_accuracy}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Obs.\ \%} & \textbf{Blocksworld} & \textbf{Logistics} & \textbf{Campus} \\
+\midrule
+25\,\%  & $0.64 \pm 0.133$ & $0.26 \pm 0.122$ & $0.20 \pm 0.111$ \\
+50\,\%  & $1.00 \pm 0.000$ & $0.26 \pm 0.122$ & $0.20 \pm 0.111$ \\
+75\,\%  & $1.00 \pm 0.000$ & $0.26 \pm 0.122$ & $0.78 \pm 0.115$ \\
+100\,\% & $1.00 \pm 0.000$ & $0.46 \pm 0.138$ & $1.00 \pm 0.000$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Blocksworld achieves perfect accuracy from 50\,\% observations onward.
+Campus requires 100\,\% for perfect accuracy.  Logistics plateaus at
+46\,\% even with complete observations, suggesting ambiguous cost
+structure in the Logistics domain.
+
+\subsubsection{Effect of $\beta$ on Accuracy and Posterior Probability}
+
+Figures~\ref{fig:bw_clean}--\ref{fig:campus_clean} show accuracy and
+true-goal posterior probability as $\beta$ varies for each domain.
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/blocksworld/clean_accuracy_vs_beta.png}
+    \caption{Accuracy vs.\ $\beta$}
+  \end{subfigure}\hfill
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/blocksworld/clean_true_goal_probability_vs_beta.png}
+    \caption{True-goal posterior vs.\ $\beta$}
+  \end{subfigure}
+  \caption{Blocksworld --- clean observations.}
+  \label{fig:bw_clean}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/blocksworld/clean_true_goal_rank_vs_beta.png}
+    \caption{True-goal rank vs.\ $\beta$}
+  \end{subfigure}
+  \caption{Blocksworld --- true-goal rank under clean observations.}
+  \label{fig:bw_rank}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/logistics/clean_accuracy_vs_beta.png}
+    \caption{Accuracy vs.\ $\beta$}
+  \end{subfigure}\hfill
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/logistics/clean_true_goal_probability_vs_beta.png}
+    \caption{True-goal posterior vs.\ $\beta$}
+  \end{subfigure}
+  \caption{Logistics --- clean observations.}
+  \label{fig:log_clean}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/campus/clean_accuracy_vs_beta.png}
+    \caption{Accuracy vs.\ $\beta$}
+  \end{subfigure}\hfill
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/campus/clean_true_goal_probability_vs_beta.png}
+    \caption{True-goal posterior vs.\ $\beta$}
+  \end{subfigure}
+  \caption{Campus --- clean observations.}
+  \label{fig:campus_clean}
+\end{figure}
+
+In all three domains, larger $\beta$ monotonically increases the
+true-goal posterior probability, consistent with the theoretical role
+of $\beta$ as an inverse temperature.  For Blocksworld, accuracy is
+insensitive to $\beta$ once $\geq 50\,\%$ of observations are
+available, because the cost difference $\Delta(G,O)$ unambiguously
+ranks the true goal first for any positive $\beta$.
+
+\subsubsection{Posterior Probability at $\beta = 1.0$}
+
+Table~\ref{tab:clean_prob} shows the mean true-goal posterior probability
+at $\beta = 1.0$.
+
+\begin{table}[H]
+\centering
+\caption{Mean true-goal posterior probability at $\beta = 1.0$, clean observations.}
+\label{tab:clean_prob}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Obs.\ \%} & \textbf{Blocksworld} & \textbf{Logistics} & \textbf{Campus} \\
+\midrule
+25\,\%  & 0.393 & 0.135 & 0.200 \\
+50\,\%  & 0.827 & 0.075 & 0.289 \\
+75\,\%  & 0.973 & 0.000 & 0.429 \\
+100\,\% & 0.996 & 0.619 & 0.592 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Blocksworld shows a clear monotone increase in posterior probability
+with observation percentage.  Campus shows the same trend.  Logistics
+behaves anomalously: the posterior falls to zero at 75\,\% before
+recovering at 100\,\%, indicating that intermediate observations can be
+misleading in domains with symmetrical cost structure.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Noisy Observations}
+% ─────────────────────────────────────────────────────────────────────────────
+
+Four noise models were evaluated at rates $r \in \{0.1, 0.2, 0.3\}$:
+
+\begin{description}
+  \item[Missing.] Actions are randomly dropped from the observation
+    sequence with probability $r$.
+  \item[Corrupt.] Actions are replaced with random valid actions with
+    probability $r$.
+  \item[Spurious.] Extra random actions are inserted with probability $r$.
+  \item[Mixed.] A combination of missing, corrupt, and spurious noise.
+\end{description}
+
+\subsubsection{Accuracy at $\beta = 1.0$, $100\,\%$ Observations}
+
+Table~\ref{tab:noise_accuracy} reports accuracy under each noise mode
+and rate at $\beta = 1.0$ with full observations.
+
+\begin{table}[H]
+\centering
+\caption{Top-1 accuracy under observation noise ($\beta = 1.0$, $100\,\%$ observations).}
+\label{tab:noise_accuracy}
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{llccc}
+\toprule
+\textbf{Noise mode} & \textbf{Domain} & \textbf{rate = 0.1} & \textbf{rate = 0.2} & \textbf{rate = 0.3} \\
+\midrule
+\multirow{3}{*}{Missing}
+  & Blocksworld & 0.88 & 0.76 & 0.68 \\
+  & Logistics   & 0.32 & 0.26 & 0.28 \\
+  & Campus      & 0.82 & 0.60 & 0.52 \\
+\midrule
+\multirow{3}{*}{Corrupt}
+  & Blocksworld & 0.74 & 0.60 & 0.46 \\
+  & Logistics   & 0.26 & 0.22 & 0.24 \\
+  & Campus      & 0.84 & 0.76 & 0.64 \\
+\midrule
+\multirow{3}{*}{Spurious}
+  & Blocksworld & 0.88 & 0.78 & 0.66 \\
+  & Logistics   & 0.28 & 0.36 & 0.40 \\
+  & Campus      & 0.88 & 0.82 & 0.72 \\
+\midrule
+\multirow{3}{*}{Mixed}
+  & Blocksworld & 0.62 & 0.48 & 0.32 \\
+  & Logistics   & 0.26 & 0.28 & 0.28 \\
+  & Campus      & 0.66 & 0.56 & 0.50 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Several patterns are evident.  Blocksworld degrades gracefully under
+missing and spurious noise but drops sharply under mixed noise.
+Logistics accuracy is near-constant across all conditions, reflecting
+its baseline difficulty even without noise.  Campus is the most
+robust domain, retaining $\geq 0.50$ accuracy even at 30\,\% mixed noise.
+
+\subsubsection{Noise Heatmaps}
+
+Figures~\ref{fig:bw_noise}--\ref{fig:campus_noise} display
+accuracy heatmaps over noise rate and $\beta$ for each noise mode
+and domain.
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/blocksworld/heatmap_missing_noise_accuracy.png}
+    \caption{Missing noise}
+  \end{subfigure}\hfill
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/blocksworld/heatmap_corrupt_noise_accuracy.png}
+    \caption{Corrupt noise}
+  \end{subfigure}
+  \\[6pt]
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/blocksworld/heatmap_spurious_noise_accuracy.png}
+    \caption{Spurious noise}
+  \end{subfigure}\hfill
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/blocksworld/heatmap_mixed_noise_accuracy.png}
+    \caption{Mixed noise}
+  \end{subfigure}
+  \caption{Blocksworld --- accuracy heatmaps (noise rate vs.\ $\beta$).}
+  \label{fig:bw_noise}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/logistics/heatmap_missing_noise_accuracy.png}
+    \caption{Missing noise}
+  \end{subfigure}\hfill
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/logistics/heatmap_corrupt_noise_accuracy.png}
+    \caption{Corrupt noise}
+  \end{subfigure}
+  \\[6pt]
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/logistics/heatmap_spurious_noise_accuracy.png}
+    \caption{Spurious noise}
+  \end{subfigure}\hfill
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/logistics/heatmap_mixed_noise_accuracy.png}
+    \caption{Mixed noise}
+  \end{subfigure}
+  \caption{Logistics --- accuracy heatmaps (noise rate vs.\ $\beta$).}
+  \label{fig:log_noise}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/campus/heatmap_missing_noise_accuracy.png}
+    \caption{Missing noise}
+  \end{subfigure}\hfill
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/campus/heatmap_corrupt_noise_accuracy.png}
+    \caption{Corrupt noise}
+  \end{subfigure}
+  \\[6pt]
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/campus/heatmap_spurious_noise_accuracy.png}
+    \caption{Spurious noise}
+  \end{subfigure}\hfill
+  \begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=\textwidth]{figures/campus/heatmap_mixed_noise_accuracy.png}
+    \caption{Mixed noise}
+  \end{subfigure}
+  \caption{Campus --- accuracy heatmaps (noise rate vs.\ $\beta$).}
+  \label{fig:campus_noise}
+\end{figure}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Discussion}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection{Claim-by-Claim Assessment}
+
+\paragraph{Claim 1: More observations improve accuracy.}
+\textbf{Supported} for Blocksworld (64\,\% $\to$ 100\,\%) and Campus
+(20\,\% $\to$ 100\,\%).  \textbf{Partially supported} for Logistics, which
+shows a non-monotone profile (accuracy dips at 75\,\% before recovering
+at 100\,\%).  This is attributable to cost symmetry in intermediate
+plan prefixes.
+
+\paragraph{Claim 2: Posterior probability concentrates on the true goal.}
+\textbf{Supported} in Blocksworld and Campus.  In Logistics the posterior
+even reaches zero at 75\,\% observations, indicating the planner assigns
+identical compliant and non-compliant costs at that point---a limitation
+noted but not addressed in the original paper.
+
+\paragraph{Claim 3: $\beta$ controls posterior sharpness.}
+\textbf{Strongly supported.}  In all three domains, increasing $\beta$
+monotonically raises the true-goal posterior probability.  Accuracy is
+less sensitive because rank-1 is maintained once the cost gap is positive,
+regardless of magnitude.
+
+\paragraph{Claim 4: Noise reduces accuracy.}
+\textbf{Supported.}  All noise types reduce accuracy relative to the
+clean baseline, with mixed noise causing the steepest degradation.
+Spurious noise is least damaging in Blocksworld and Campus; corrupt
+noise is most damaging.
+
+\paragraph{Claim 5: The method generalises across domains.}
+\textbf{Partially supported.}  The approach works well on Blocksworld and
+Campus.  Logistics presents persistent challenges likely due to cost
+ties in the domain's action structure.
+
+\subsection{Reproducibility Limitations}
+
+\begin{enumerate}
+  \item \textbf{Unspecified $\beta$.}  The original paper gives no value for
+        $\beta$, making exact numerical comparison impossible.  This study
+        uses $\beta = 1$ as the reference and sweeps a wide range.
+  \item \textbf{Planner differences.}  The built-in A$^*$ planner may return
+        different optimal plans from Fast~Downward when there are ties,
+        affecting $\Delta(G,O)$.
+  \item \textbf{Benchmark generation.}  The original benchmarks are not
+        publicly available; this study uses manually constructed problem
+        instances of comparable size.
+  \item \textbf{Domain scale.}  All domains are small (3 blocks, 5 goals per
+        domain) to permit exhaustive repeated trials; the original paper
+        uses larger instances.
+\end{enumerate}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Conclusion}
+% ══════════════════════════════════════════════════════════════════════════════
+
+This study provides a clean, self-contained Python reproduction of the
+probabilistic plan-recognition framework of Ram\'{i}rez and Geffner.
+The central idea---using planner-derived cost differences as a proxy for
+observational likelihood---is confirmed to work robustly on two out of
+three domains under a range of observation percentages, $\beta$ values,
+and noise conditions.  The Logistics domain reveals a domain-specific
+failure mode related to cost symmetry in intermediate plan prefixes.
+
+The main obstacle to exact numerical reproduction is the unspecified
+$\beta$ parameter; this study addresses this by reporting a full
+sensitivity sweep.  The implementation, data, and plots are packaged in
+the accompanying repository for independent verification.
+
+% ── References ────────────────────────────────────────────────────────────────
+\bibliographystyle{plainnat}
+\begin{thebibliography}{1}
+
+\bibitem{ramirez2010}
+Miquel Ram\'{i}rez and Hector Geffner.
+\newblock Probabilistic plan recognition using off-the-shelf classical planners.
+\newblock In \emph{Proceedings of the 24th AAAI Conference on Artificial
+  Intelligence (AAAI-10)}, pages 1121--1126, 2010.
+
+\end{thebibliography}
+
+\end{document}
